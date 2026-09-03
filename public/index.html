@@ -35,8 +35,11 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
-    /* URL WEB APP GOOGLE APPS SCRIPT ANDA */
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyKINi7NYQ4xiafEyPpvmRPehaXKn-ox9ZRcNu9WVEF8fsi7579wuI1odXqtawZZNK3kg/exec";
+    /* URL WEB APP GOOGLE APPS SCRIPT DENGAN ENDPOINT TERPISAH */
+    const GAS_API_URLS = {
+      upro: "https://script.google.com/macros/s/AKfycbwGS7zpMx_1isE3E-d5Fk6dou1qnaVGSmbcmQ85wM7-hr0aIqiVfRpdZjD30dGY0_Rehg/exec",
+      tefa: "https://script.google.com/macros/s/AKfycbwo9QvVVwlBB1REbddTMelj7__hxwOIpVzWey7q-kRQ1JZ0YJe-gVUZZcy_61izu_kR/exec"
+    };
 
     /* ============================================================
        HELPER & CONSTANTS
@@ -81,11 +84,12 @@
       };
     }
 
-    /* ---------------- INTEGRASI HTTP FETCH ---------------- */
+    /* ---------------- INTEGRASI HTTP FETCH DINAMIS ---------------- */
     async function loadBook(kind) {
-      if (!GAS_API_URL) return defaultBook(kind);
+      const url = GAS_API_URLS[kind];
+      if (!url) return defaultBook(kind);
       try {
-        const res = await fetch(`${GAS_API_URL}?kind=${kind}`);
+        const res = await fetch(`${url}?kind=${kind}`);
         const data = await res.json();
         if (!data || !data.sheets) return defaultBook(kind);
         return data;
@@ -96,9 +100,10 @@
     }
 
     async function saveBook(kind, data) {
-      if (!GAS_API_URL) return false;
+      const url = GAS_API_URLS[kind];
+      if (!url) return false;
       try {
-        await fetch(GAS_API_URL, {
+        await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
           body: JSON.stringify({ kind, data }),
