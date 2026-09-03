@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Buku Kas Besar TEFA & UPRO DKV</title>
+
+  <!-- React & Babel CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,500;8..60,700&display=swap" rel="stylesheet">
+
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #F6F2E7;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    button:active { transform: scale(0.98); }
+    button:hover { filter: brightness(0.97); }
+    input:focus, select:focus { outline: 2px solid #26211A33; }
+  </style>
+</head>
+<body>
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    /* URL WEB APP GOOGLE APPS SCRIPT ANDA */
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyKINi7NYQ4xiafEyPpvmRPehaXKn-ox9ZRcNu9WVEF8fsi7579wuI1odXqtawZZNK3kg/exec";
+
+    /* ============================================================
+       HELPER & CONSTANTS
+       ============================================================ */
+    const MONTH_NAMES = [
+      "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+      "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+    ];
+
+    const rupiah = (n) =>
+      "Rp " + Math.round(n || 0).toLocaleString("id-ID", { maximumFractionDigits: 0 });
+
+    const fmtDate = (iso) => {
+      if (!iso) return "-";
+      const [y, m, d] = String(iso).slice(0, 10).split("-");
+      return `${d}-${MONTH_NAMES[parseInt(m, 10) - 1]?.slice(0, 3) || m}-${y}`;
+    };
+
+    const todayISO = () => new Date().toISOString().slice(0, 10);
+    const uid = (p) => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+    function defaultBook(kind) {
+      const isTefa = kind === "tefa";
+      return {
+        key: kind,
+        title: isTefa ? "TEACHING FACTORY" : "UNIT PRODUKSI",
+        subtitle: "Desain Komunikasi Visual",
+        accent: isTefa ? "#2f6b57" : "#a8631f",
+        accentSoft: isTefa ? "#e7f1ec" : "#f5ecdd",
+        coordinatorRole: isTefa ? "Koordinator TEFA" : "Koordinator Unit Produksi",
+        coordinatorName: isTefa ? "Indra Dwi Cahya, S.Kom" : "Nugraha Putra Usmayani, S.Pd",
+        activeYear: 2026,
+        sheets: {
+          2026: {
+            year: 2026,
+            openingBalance: isTefa ? 959906 : 2038831.6,
+            prevYearBalance: 0,
+            transactions: [],
+          }
+        },
+        archives: [],
+      };
+    }
+
+    /* ---------------- INTEGRASI HTTP FETCH ---------------- */
+    async function loadBook(kind) {
+      if (!GAS_API_URL) return defaultBook(kind);
+      try {
+        const res = await fetch(`${GAS_API_URL}?kind=${kind}`);
+        const data = await res.json();
+        if (!data || !data.sheets) return defaultBook(kind);
+        return data;
+      } catch (err) {
+        console.error("Gagal memuat data:", err);
+        return defaultBook(kind);
+      }
+    }
+
+    async function saveBook(kind, data) {
+      if (!GAS_API_URL) return false;
+      try {
+        await fetch(GAS_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({ kind, data }),
+        });
+        return true;
+      } catch (err) {
+        console.error("Gagal menyimpan data:", err);
+        return false;
+      }
+    }
+
+    /* ---------------- COMPUTATION HELPERS ---------------- */
+    function computeRunning(sheet) {
+      if (!sheet) return { list: [], finalSaldo: 0 };
+      const sorted = [...(sheet.transactions || [])].sort((a, b) => {
+        if (a.tanggal !== b.tanggal) return a.tanggal < b.tanggal ? -1 : 1;
+        return 0;
+      });
+      let saldo = sheet.openingBalance || 0;
+      const withSaldo = sorted.map((tx) => {
+        saldo += tx.tipe === "in" ? tx.jumlah : -tx.jumlah;
+        return { ...tx, saldoRunning: saldo };
+      });
+      return { list: withSaldo, finalSaldo: saldo };
+    }
+
+    function groupByMonth(list) {
+      const map = new Map();
+      for (const tx of list) {
+        const key = tx.tanggal ? String(tx.tanggal).slice(0, 7) : "unknown";
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(tx);
+      }
+      return [...map.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+    }
+
+    function monthLabel(key) {
+      if (key === "unknown") return "Tanpa tanggal";
+      const [y, m] = key.split("-");
+      return `${MONTH_NAMES[parseInt(m, 10) - 1]} ${y}`;
+    }
+
+    function csvEscape(v) {
+      const s = String(v ?? "");
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    }
+
+    function downloadCSV(filename, rows) {
+      const csv = rows.map((r) => r.map(csvEscape).join(",")).join("\r\n");
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+
+    /* ============================================================
+       UI COMPONENTS
+       ============================================================ */
+    function IconPlus() {
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      );
+    }
+    function IconEdit() {
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <path d="M11.3 2.3a1.5 1.5 0 0 1 2.1 2.1L5.5 12.3l-2.9.7.7-2.9 8-7.8Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        </svg>
+      );
+    }
+    function IconTrash() {
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <path d="M3 4.5h10M6.5 4.5V3a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5M4.5 4.5 5 13a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l.5-8.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    }
+    function IconDownload() {
+      return (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path d="M8 2v8m0 0 3-3m-3 3-3-3M3 13h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    }
+    function IconChevron({ open }) {
+      return (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }}>
+          <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    }
+
+    const btnBase = {
+      border: "none",
+      borderRadius: 7,
+      padding: "9px 15px",
+      fontSize: 13.5,
+      fontWeight: 600,
+      cursor: "pointer",
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      fontFamily: "inherit",
+      transition: "filter .12s, transform .05s",
+    };
+    const btnGhost = {
+      ...btnBase,
+      background: "transparent",
+      border: "1px solid #D9CFB4",
+      color: "#4A4335",
+    };
+    const inputStyle = {
+      width: "100%",
+      boxSizing: "border-box",
+      padding: "9px 11px",
+      borderRadius: 7,
+      border: "1px solid #D9CFB4",
+      background: "#fff",
+      fontSize: 14,
+      fontFamily: "inherit",
+      color: "#26211A",
+    };
+    const labelStyle = { fontSize: 12, color: "#7A705C", marginBottom: 5, display: "block", fontWeight: 600 };
+    const th = { padding: "9px 12px", fontSize: 11.5, color: "#7A705C", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 };
+    const td = { padding: "9px 12px", color: "#26211A" };
+    const iconBtn = { border: "none", background: "transparent", cursor: "pointer", padding: 5, color: "#7A705C", borderRadius: 5 };
+
+    function Modal({ children, onClose, title }) {
+      return (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(24,20,14,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 100,
+            padding: 16,
+          }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+        >
+          <div
+            style={{
+              background: "#FCFAF5",
+              borderRadius: 10,
+              width: "min(560px, 100%)",
+              maxHeight: "88vh",
+              overflowY: "auto",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+              border: "1px solid #E4DCC8",
+            }}
+          >
+            <div
+              style={{
+                padding: "16px 20px",
+                borderBottom: "1px solid #E4DCC8",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                position: "sticky",
+                top: 0,
+                background: "#FCFAF5",
+                borderRadius: "10px 10px 0 0",
+              }}
+            >
+              <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 18, color: "#26211A" }}>
+                {title}
+              </div>
+              <button onClick={onClose} style={{ ...btnGhost, padding: "4px 10px" }}>Tutup</button>
+            </div>
+            <div style={{ padding: 20 }}>{children}</div>
+          </div>
+        </div>
+      );
+    }
+
+    function Field({ label, children }) {
+      return (
+        <div style={{ marginBottom: 14 }}>
+          <span style={labelStyle}>{label}</span>
+          {children}
+        </div>
+      );
+    }
+
+    /* ---------------- TRANSACTION MODAL ---------------- */
+    function TxModal({ initial, onSave, onClose, accent }) {
+      const [tanggal, setTanggal] = useState(initial?.tanggal ? String(initial.tanggal).slice(0, 10) : todayISO());
+      const [noBukti, setNoBukti] = useState(initial?.noBukti || "");
+      const [item, setItem] = useState(initial?.item || "");
+      const [unit, setUnit] = useState(initial?.unit ?? "");
+      const [harga, setHarga] = useState(initial?.harga ?? "");
+      const [jumlah, setJumlah] = useState(initial?.jumlah ?? "");
+      const [tipe, setTipe] = useState(initial?.tipe || "in");
+      const [autoJumlah, setAutoJumlah] = useState(!initial || (initial.unit && initial.harga));
+      const [error, setError] = useState("");
+
+      useEffect(() => {
+        if (autoJumlah) {
+          const u = parseFloat(unit);
+          const h = parseFloat(harga);
+          if (!isNaN(u) && !isNaN(h)) setJumlah(String(u * h));
+        }
+      }, [unit, harga, autoJumlah]);
+
+      const submit = () => {
+        const jVal = parseFloat(jumlah);
+        if (!tanggal) return setError("Tanggal wajib diisi.");
+        if (!item.trim()) return setError("Uraian / item wajib diisi.");
+        if (isNaN(jVal) || jVal <= 0) return setError("Jumlah harus lebih dari 0.");
+        onSave({
+          id: initial?.id || uid("tx"),
+          tanggal,
+          noBukti: noBukti.trim(),
+          item: item.trim(),
+          unit: unit === "" ? null : parseFloat(unit),
+          harga: harga === "" ? null : parseFloat(harga),
+          jumlah: jVal,
+          tipe,
+        });
+      };
+
+      return (
+        <Modal title={initial ? "Ubah Transaksi" : "Tambah Transaksi"} onClose={onClose}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <Field label="Tanggal">
+              <input type="date" style={inputStyle} value={tanggal} onChange={(e) => setTanggal(e.target.value)} />
+            </Field>
+            <Field label="No. Bukti (opsional)">
+              <input style={inputStyle} value={noBukti} onChange={(e) => setNoBukti(e.target.value)} placeholder="—" />
+            </Field>
+          </div>
+
+          <Field label="Uraian / Item">
+            <input style={inputStyle} value={item} onChange={(e) => setItem(e.target.value)} placeholder="Nama barang / keterangan" />
+          </Field>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <Field label="Unit (opsional)">
+              <input type="number" style={inputStyle} value={unit} onChange={(e) => { setUnit(e.target.value); setAutoJumlah(true); }} placeholder="0" />
+            </Field>
+            <Field label="Harga / Unit (opsional)">
+              <input type="number" style={inputStyle} value={harga} onChange={(e) => { setHarga(e.target.value); setAutoJumlah(true); }} placeholder="0" />
+            </Field>
+          </div>
+
+          <Field label="Jumlah (Rp)">
+            <input type="number" style={inputStyle} value={jumlah} onChange={(e) => { setJumlah(e.target.value); setAutoJumlah(false); }} placeholder="0" />
+          </Field>
+
+          <Field label="Jenis Transaksi">
+            <div style={{ display: "flex", gap: 10 }}>
+              {[{ v: "in", l: "Pemasukan" }, { v: "out", l: "Pengeluaran" }].map((o) => (
+                <button
+                  key={o.v}
+                  onClick={() => setTipe(o.v)}
+                  style={{
+                    ...btnBase,
+                    flex: 1,
+                    justifyContent: "center",
+                    background: tipe === o.v ? (o.v === "in" ? "#2f6b57" : "#a8451f") : "#F1ECDD",
+                    color: tipe === o.v ? "#fff" : "#5c5544",
+                  }}
+                >
+                  {o.l}
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          {error && <div style={{ color: "#a8451f", fontSize: 13, marginBottom: 10 }}>{error}</div>}
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6 }}>
+            <button style={btnGhost} onClick={onClose}>Batal</button>
+            <button style={{ ...btnBase, background: accent, color: "#fff" }} onClick={submit}>Simpan</button>
+          </div>
+        </Modal>
+      );
+    }
+
+    /* ---------------- CONFIRM DIALOG ---------------- */
+    function ConfirmModal({ title, message, confirmLabel, danger, onConfirm, onClose }) {
+      return (
+        <Modal title={title} onClose={onClose}>
+          <p style={{ fontSize: 14, color: "#4A4335", lineHeight: 1.6 }}>{message}</p>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+            <button style={btnGhost} onClick={onClose}>Batal</button>
+            <button style={{ ...btnBase, background: danger ? "#a8451f" : "#2f6b57", color: "#fff" }} onClick={onConfirm}>
+              {confirmLabel}
+            </button>
+          </div>
+        </Modal>
+      );
+    }
+
+    /* ---------------- MONTH SECTION ---------------- */
+    function MonthSection({ monthKey, label, txs, accent, onEdit, onDelete, defaultOpen, isFirstMonth, openingBalance }) {
+      const [open, setOpen] = useState(defaultOpen);
+      const pemasukan = txs.reduce((s, t) => s + (t.tipe === "in" ? t.jumlah : 0), 0);
+      const pengeluaran = txs.reduce((s, t) => s + (t.tipe === "out" ? t.jumlah : 0), 0);
+      const akhir = txs.length ? txs[txs.length - 1].saldoRunning : openingBalance;
+
+      return (
+        <div style={{ border: "1px solid #E4DCC8", borderRadius: 9, marginBottom: 12, overflow: "hidden", background: "#fff" }}>
+          <button
+            onClick={() => setOpen((o) => !o)}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "12px 16px",
+              background: "#FBF8F0",
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ color: accent }}><IconChevron open={open} /></span>
+              <span style={{ fontWeight: 700, fontSize: 14.5, color: "#26211A" }}>{label}</span>
+              <span style={{ fontSize: 12, color: "#9C927B" }}>{txs.length} transaksi</span>
+            </div>
+            <div style={{ display: "flex", gap: 18, fontSize: 12.5, fontVariantNumeric: "tabular-nums" }}>
+              <span style={{ color: "#2f6b57" }}>+{rupiah(pemasukan)}</span>
+              <span style={{ color: "#a8451f" }}>-{rupiah(pengeluaran)}</span>
+              {akhir != null && <span style={{ color: "#26211A", fontWeight: 700 }}>{rupiah(akhir)}</span>}
+            </div>
+          </button>
+          {open && (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#F5F1E6", textAlign: "left" }}>
+                    <th style={th}>Tanggal</th>
+                    <th style={th}>No. Bukti</th>
+                    <th style={th}>Uraian</th>
+                    <th style={{ ...th, textAlign: "right" }}>Unit</th>
+                    <th style={{ ...th, textAlign: "right" }}>Harga/Unit</th>
+                    <th style={{ ...th, textAlign: "right" }}>Pemasukan</th>
+                    <th style={{ ...th, textAlign: "right" }}>Pengeluaran</th>
+                    <th style={{ ...th, textAlign: "right" }}>Saldo</th>
+                    <th style={th}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* BARIS SALDO SEBELUMNYA / SALDO AWAL (PALING ATAS) */}
+                  {isFirstMonth && (
+                    <tr style={{ background: "#FCF9F2", fontWeight: 600, borderBottom: "2px solid #E4DCC8" }}>
+                      <td style={td}>—</td>
+                      <td style={td}>—</td>
+                      <td style={{ ...td, color: accent }}>SALDO SEBELUMNYA / SALDO AWAL TAHUN</td>
+                      <td style={{ ...td, textAlign: "right" }}>—</td>
+                      <td style={{ ...td, textAlign: "right" }}>—</td>
+                      <td style={{ ...td, textAlign: "right", color: "#2f6b57" }}>{rupiah(openingBalance)}</td>
+                      <td style={{ ...td, textAlign: "right" }}>—</td>
+                      <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{rupiah(openingBalance)}</td>
+                      <td style={td}></td>
+                    </tr>
+                  )}
+
+                  {txs.map((t) => (
+                    <tr key={t.id} style={{ borderTop: "1px solid #EFE9D8" }}>
+                      <td style={td}>{fmtDate(t.tanggal)}</td>
+                      <td style={td}>{t.noBukti || "—"}</td>
+                      <td style={td}>{t.item}</td>
+                      <td style={{ ...td, textAlign: "right" }}>{t.unit ?? "—"}</td>
+                      <td style={{ ...td, textAlign: "right" }}>{t.harga ? rupiah(t.harga) : "—"}</td>
+                      <td style={{ ...td, textAlign: "right", color: "#2f6b57", fontVariantNumeric: "tabular-nums" }}>
+                        {t.tipe === "in" ? rupiah(t.jumlah) : ""}
+                      </td>
+                      <td style={{ ...td, textAlign: "right", color: "#a8451f", fontVariantNumeric: "tabular-nums" }}>
+                        {t.tipe === "out" ? rupiah(t.jumlah) : ""}
+                      </td>
+                      <td style={{ ...td, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                        {rupiah(t.saldoRunning)}
+                      </td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>
+                        <button onClick={() => onEdit(t)} style={iconBtn} title="Ubah"><IconEdit /></button>
+                        <button onClick={() => onDelete(t)} style={{ ...iconBtn, color: "#a8451f" }} title="Hapus"><IconTrash /></button>
+                      </td>
+                    </tr>
+                  ))}
+                  {txs.length === 0 && !isFirstMonth && (
+                    <tr>
+                      <td colSpan={9} style={{ ...td, textAlign: "center", color: "#9C927B", padding: "18px 0" }}>
+                        Belum ada transaksi bulan ini.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ---------------- STAT CARD ---------------- */
+    function StatCard({ label, value, tone }) {
+      const colors = { neutral: "#26211A", good: "#2f6b57", bad: "#a8451f" };
+      return (
+        <div style={{ background: "#fff", border: "1px solid #E4DCC8", borderRadius: 9, padding: "14px 16px", flex: 1, minWidth: 150 }}>
+          <div style={{ fontSize: 11.5, color: "#9C927B", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>
+            {label}
+          </div>
+          <div style={{ fontSize: 19, fontWeight: 700, color: colors[tone] || colors.neutral, fontVariantNumeric: "tabular-nums", fontFamily: "'Source Serif 4', Georgia, serif" }}>
+            {value}
+          </div>
+        </div>
+      );
+    }
+
+    /* ============================================================
+       BOOK VIEW
+       ============================================================ */
+    function BookView({ book, setBook }) {
+      const activeYear = book.activeYear || 2026;
+      const currentSheet = book.sheets?.[activeYear] || {
+        year: activeYear,
+        openingBalance: 0,
+        transactions: [],
+      };
+
+      const [txModal, setTxModal] = useState(null);
+      const [deleteTarget, setDeleteTarget] = useState(null);
+      const [closeYearOpen, setCloseYearOpen] = useState(false);
+      const [selectedMonth, setSelectedMonth] = useState("ALL");
+      const [editingOpening, setEditingOpening] = useState(false);
+      const [openingDraft, setOpeningDraft] = useState(currentSheet.openingBalance);
+      const [showArchives, setShowArchives] = useState(false);
+
+      useEffect(() => {
+        setOpeningDraft(currentSheet.openingBalance);
+      }, [activeYear, currentSheet.openingBalance]);
+
+      const { list, finalSaldo } = useMemo(() => computeRunning(currentSheet), [currentSheet]);
+      const months = useMemo(() => groupByMonth(list), [list]);
+      const totalPemasukan = list.reduce((s, t) => s + (t.tipe === "in" ? t.jumlah : 0), 0);
+      const totalPengeluaran = list.reduce((s, t) => s + (t.tipe === "out" ? t.jumlah : 0), 0);
+      const potongan40 = finalSaldo * 0.4;
+      const potongan60 = finalSaldo * 0.6;
+
+      const persist = async (nextBook) => {
+        setBook(nextBook);
+        await saveBook(book.key, nextBook);
+      };
+
+      const updateCurrentSheet = (nextSheet) => {
+        const nextBook = {
+          ...book,
+          sheets: {
+            ...book.sheets,
+            [activeYear]: nextSheet,
+          },
+        };
+        persist(nextBook);
+      };
+
+      const addTx = (tx) => {
+        updateCurrentSheet({
+          ...currentSheet,
+          transactions: [...(currentSheet.transactions || []), tx],
+        });
+        setTxModal(null);
+      };
+
+      const editTx = (tx) => {
+        updateCurrentSheet({
+          ...currentSheet,
+          transactions: (currentSheet.transactions || []).map((t) => (t.id === tx.id ? tx : t)),
+        });
+        setTxModal(null);
+      };
+
+      const deleteTx = () => {
+        updateCurrentSheet({
+          ...currentSheet,
+          transactions: (currentSheet.transactions || []).filter((t) => t.id !== deleteTarget.id),
+        });
+        setDeleteTarget(null);
+      };
+
+      const saveOpening = () => {
+        const v = parseFloat(openingDraft);
+        if (!isNaN(v)) {
+          updateCurrentSheet({ ...currentSheet, openingBalance: v });
+        }
+        setEditingOpening(false);
+      };
+
+      /* DUPLIKASI SHEET TAHUN BARU */
+      const closeYearAndCreateNewSheet = () => {
+        const nextYear = activeYear + 1;
+        const archive = {
+          year: activeYear,
+          totalSaldo: finalSaldo,
+          potongan40,
+          potongan60,
+          tanggalSetor: todayISO(),
+        };
+
+        const newSheet = {
+          year: nextYear,
+          openingBalance: potongan40,
+          prevYearBalance: finalSaldo,
+          transactions: [],
+        };
+
+        const nextBook = {
+          ...book,
+          activeYear: nextYear,
+          sheets: {
+            ...book.sheets,
+            [nextYear]: newSheet,
+          },
+          archives: [archive, ...(book.archives || [])],
+        };
+
+        persist(nextBook);
+        setCloseYearOpen(false);
+      };
+
+      const monthOptions = months.filter(([k]) => k !== "unknown");
+      const visibleMonths = selectedMonth === "ALL" ? months : months.filter(([k]) => k === selectedMonth);
+      const sheetYears = Object.keys(book.sheets || {}).map(Number).sort((a, b) => b - a);
+
+      const downloadMonthRecap = (key) => {
+        const [, txs] = months.find(([k]) => k === key) || [null, []];
+        const label = monthLabel(key);
+        const rows = [
+          [`BUKU KAS ${book.title} — ${book.subtitle}`],
+          [`Rekapan Bulan: ${label}`],
+          [],
+          ["Tanggal", "No Bukti", "Uraian", "Unit", "Harga/Unit", "Pemasukan", "Pengeluaran", "Saldo"],
+        ];
+
+        rows.push(["—", "—", "SALDO SEBELUMNYA / SALDO AWAL", "—", "—", currentSheet.openingBalance, "—", currentSheet.openingBalance]);
+
+        txs.forEach((t) => {
+          rows.push([
+            fmtDate(t.tanggal),
+            t.noBukti || "",
+            t.item,
+            t.unit ?? "",
+            t.harga ?? "",
+            t.tipe === "in" ? t.jumlah : "",
+            t.tipe === "out" ? t.jumlah : "",
+            t.saldoRunning,
+          ]);
+        });
+        const pemasukan = txs.reduce((s, t) => s + (t.tipe === "in" ? t.jumlah : 0), 0);
+        const pengeluaran = txs.reduce((s, t) => s + (t.tipe === "out" ? t.jumlah : 0), 0);
+        rows.push([]);
+        rows.push(["TOTAL", "", "", "", "", pemasukan, pengeluaran, txs.length ? txs[txs.length - 1].saldoRunning : currentSheet.openingBalance]);
+        downloadCSV(`Rekap_${book.key.toUpperCase()}_${key}.csv`, rows);
+      };
+
+      const downloadYearRecap = () => {
+        const rows = [
+          [`BUKU KAS ${book.title} — ${book.subtitle}`],
+          [`Rekapan Tahunan ${activeYear}`],
+          [],
+          ["Bulan", "Pemasukan", "Pengeluaran", "Saldo Akhir Bulan"],
+        ];
+        months.forEach(([key, txs]) => {
+          if (key === "unknown") return;
+          const pemasukan = txs.reduce((s, t) => s + (t.tipe === "in" ? t.jumlah : 0), 0);
+          const pengeluaran = txs.reduce((s, t) => s + (t.tipe === "out" ? t.jumlah : 0), 0);
+          rows.push([monthLabel(key), pemasukan, pengeluaran, txs[txs.length - 1]?.saldoRunning ?? ""]);
+        });
+        rows.push([]);
+        rows.push(["Saldo Awal Tahun (40% Stumul)", currentSheet.openingBalance]);
+        rows.push(["Total Pemasukan", totalPemasukan]);
+        rows.push(["Total Pengeluaran", totalPengeluaran]);
+        rows.push(["Saldo Akhir Tahun", finalSaldo]);
+        rows.push([]);
+        rows.push(["Potongan 40% (STUMUL)", potongan40]);
+        rows.push(["Potongan 60% (BLUD)", potongan60]);
+        downloadCSV(`Rekap_Tahunan_${book.key.toUpperCase()}_${activeYear}.csv`, rows);
+      };
+
+      return (
+        <div>
+          {/* NAVIGASI SHEET TAHUN */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: "#7A705C", marginRight: 6 }}>SHEET TAHUN:</span>
+            {sheetYears.map((yr) => (
+              <button
+                key={yr}
+                onClick={() => persist({ ...book, activeYear: yr })}
+                style={{
+                  ...btnBase,
+                  padding: "5px 12px",
+                  fontSize: 12.5,
+                  background: activeYear === yr ? book.accent : "#EFE9D8",
+                  color: activeYear === yr ? "#fff" : "#4A4335",
+                }}
+              >
+                Sheet {yr}
+              </button>
+            ))}
+          </div>
+
+          {/* Header strip */}
+          <div
+            style={{
+              background: book.accentSoft,
+              border: `1px solid ${book.accent}33`,
+              borderRadius: 10,
+              padding: "16px 20px",
+              marginBottom: 18,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-end",
+              flexWrap: "wrap",
+              gap: 12,
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 12, letterSpacing: 0.4, color: book.accent, fontWeight: 700 }}>
+                BUKU KAS UMUM — {book.subtitle.toUpperCase()}
+              </div>
+              <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 24, color: "#26211A", marginTop: 2 }}>
+                {book.title}
+              </div>
+              <div style={{ fontSize: 13, color: "#5c5544", marginTop: 4 }}>
+                Tahun berjalan: <strong>{activeYear}</strong> · {book.coordinatorRole}: {book.coordinatorName}
+              </div>
+            </div>
+            <button
+              style={{ ...btnBase, background: book.accent, color: "#fff" }}
+              onClick={() => setTxModal({ mode: "add" })}
+            >
+              <IconPlus /> Tambah Transaksi
+            </button>
+          </div>
+
+          {/* Stat cards */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+            <StatCard
+              label="Saldo Awal Tahun"
+              value={
+                editingOpening ? (
+                  <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      type="number"
+                      autoFocus
+                      value={openingDraft}
+                      onChange={(e) => setOpeningDraft(e.target.value)}
+                      style={{ ...inputStyle, fontSize: 15, padding: "4px 8px", width: 140 }}
+                      onKeyDown={(e) => e.key === "Enter" && saveOpening()}
+                    />
+                    <button style={{ ...btnGhost, padding: "4px 8px", fontSize: 12 }} onClick={saveOpening}>OK</button>
+                  </span>
+                ) : (
+                  <span onClick={() => { setOpeningDraft(currentSheet.openingBalance); setEditingOpening(true); }} style={{ cursor: "pointer" }} title="Klik untuk ubah">
+                    {rupiah(currentSheet.openingBalance)}
+                  </span>
+                )
+              }
+            />
+            <StatCard label="Total Pemasukan" value={rupiah(totalPemasukan)} tone="good" />
+            <StatCard label="Total Pengeluaran" value={rupiah(totalPengeluaran)} tone="bad" />
+            <StatCard label="Saldo Saat Ini" value={rupiah(finalSaldo)} />
+          </div>
+
+          {/* Potongan panel */}
+          <div style={{ background: "#fff", border: "1px solid #E4DCC8", borderRadius: 10, padding: 18, marginBottom: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 16, color: "#26211A" }}>
+                  Pemotongan Setoran BLUD &amp; Tutup Buku
+                </div>
+                <div style={{ fontSize: 12.5, color: "#7A705C", marginTop: 2 }}>
+                  Dihitung otomatis dari saldo saat ini — 40% Stumul (dana pengelolaan) &amp; 60% BLUD.
+                </div>
+              </div>
+              <button style={{ ...btnBase, background: "#26211A", color: "#fff" }} onClick={() => setCloseYearOpen(true)}>
+                + Tambah Sheet Tahun {activeYear + 1}
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 12, marginTop: 14, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 180, background: "#F5F1E6", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ fontSize: 11.5, color: "#7A705C", fontWeight: 700 }}>POTONGAN 40% — STUMUL</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#26211A", marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+                  {rupiah(potongan40)}
+                </div>
+              </div>
+              <div style={{ flex: 1, minWidth: 180, background: "#F5F1E6", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ fontSize: 11.5, color: "#7A705C", fontWeight: 700 }}>POTONGAN 60% — BLUD</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#26211A", marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+                  {rupiah(potongan60)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Download bar */}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              style={{ ...inputStyle, width: "auto", padding: "8px 10px" }}
+            >
+              <option value="ALL">Semua bulan</option>
+              {monthOptions.map(([k]) => (
+                <option key={k} value={k}>{monthLabel(k)}</option>
+              ))}
+            </select>
+            <button style={btnGhost} disabled={selectedMonth === "ALL"} onClick={() => downloadMonthRecap(selectedMonth)}>
+              <IconDownload /> Unduh Rekap Bulanan
+            </button>
+            <button style={btnGhost} onClick={downloadYearRecap}>
+              <IconDownload /> Unduh Rekap Tahunan
+            </button>
+          </div>
+
+          {/* Month sections */}
+          {visibleMonths.length === 0 && (
+            <div style={{ border: "1px solid #E4DCC8", borderRadius: 9, padding: 20, background: "#fff" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#F5F1E6", textAlign: "left" }}>
+                    <th style={th}>Tanggal</th>
+                    <th style={th}>No. Bukti</th>
+                    <th style={th}>Uraian</th>
+                    <th style={{ ...th, textAlign: "right" }}>Unit</th>
+                    <th style={{ ...th, textAlign: "right" }}>Harga/Unit</th>
+                    <th style={{ ...th, textAlign: "right" }}>Pemasukan</th>
+                    <th style={{ ...th, textAlign: "right" }}>Pengeluaran</th>
+                    <th style={{ ...th, textAlign: "right" }}>Saldo</th>
+                    <th style={th}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style={{ background: "#FCF9F2", fontWeight: 600 }}>
+                    <td style={td}>—</td>
+                    <td style={td}>—</td>
+                    <td style={{ ...td, color: book.accent }}>SALDO SEBELUMNYA / SALDO AWAL TAHUN</td>
+                    <td style={{ ...td, textAlign: "right" }}>—</td>
+                    <td style={{ ...td, textAlign: "right" }}>—</td>
+                    <td style={{ ...td, textAlign: "right", color: "#2f6b57" }}>{rupiah(currentSheet.openingBalance)}</td>
+                    <td style={{ ...td, textAlign: "right" }}>—</td>
+                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{rupiah(currentSheet.openingBalance)}</td>
+                    <td style={td}></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {visibleMonths.map(([key, txs], idx) => (
+            <MonthSection
+              key={key}
+              monthKey={key}
+              label={monthLabel(key)}
+              txs={txs}
+              accent={book.accent}
+              defaultOpen={idx === visibleMonths.length - 1 || visibleMonths.length === 1}
+              isFirstMonth={idx === 0}
+              openingBalance={currentSheet.openingBalance}
+              onEdit={(tx) => setTxModal({ mode: "edit", tx })}
+              onDelete={(tx) => setDeleteTarget(tx)}
+            />
+          ))}
+
+          {/* Archives */}
+          {book.archives && book.archives.length > 0 && (
+            <div style={{ marginTop: 24 }}>
+              <button onClick={() => setShowArchives((s) => !s)} style={{ ...btnGhost, marginBottom: 10 }}>
+                <IconChevron open={showArchives} /> Riwayat Setoran BLUD ({book.archives.length})
+              </button>
+              {showArchives && (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "#fff", border: "1px solid #E4DCC8", borderRadius: 8 }}>
+                    <thead>
+                      <tr style={{ background: "#F5F1E6" }}>
+                        <th style={th}>Tahun</th>
+                        <th style={th}>Tanggal Setor</th>
+                        <th style={{ ...th, textAlign: "right" }}>Total Saldo</th>
+                        <th style={{ ...th, textAlign: "right" }}>40% Stumul</th>
+                        <th style={{ ...th, textAlign: "right" }}>60% BLUD</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {book.archives.map((a, idx) => (
+                        <tr key={idx} style={{ borderTop: "1px solid #EFE9D8" }}>
+                          <td style={td}>{a.year}</td>
+                          <td style={td}>{fmtDate(a.tanggalSetor)}</td>
+                          <td style={{ ...td, textAlign: "right" }}>{rupiah(a.totalSaldo)}</td>
+                          <td style={{ ...td, textAlign: "right" }}>{rupiah(a.potongan40)}</td>
+                          <td style={{ ...td, textAlign: "right" }}>{rupiah(a.potongan60)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Modals */}
+          {txModal && (
+            <TxModal
+              initial={txModal.mode === "edit" ? txModal.tx : null}
+              accent={book.accent}
+              onClose={() => setTxModal(null)}
+              onSave={txModal.mode === "edit" ? editTx : addTx}
+            />
+          )}
+          {deleteTarget && (
+            <ConfirmModal
+              title="Hapus transaksi?"
+              message={`Transaksi "${deleteTarget.item}" tanggal ${fmtDate(deleteTarget.tanggal)} sebesar ${rupiah(deleteTarget.jumlah)} akan dihapus permanen.`}
+              confirmLabel="Hapus"
+              danger
+              onConfirm={deleteTx}
+              onClose={() => setDeleteTarget(null)}
+            />
+          )}
+          {closeYearOpen && (
+            <ConfirmModal
+              title={`Tutup Buku & Buat Sheet ${activeYear + 1}?`}
+              message={`Saldo akhir tahun ${activeYear} (${rupiah(finalSaldo)}) akan dipotong: 40% (${rupiah(potongan40)}) disetorkan ke STUMUL sebagai SALDO AWAL (paling atas) pada Sheet Tahun ${activeYear + 1}, dan 60% (${rupiah(potongan60)}) disetorkan ke BLUD. Lanjutkan duplikasi sheet?`}
+              confirmLabel="Ya, Buat Sheet Baru"
+              danger
+              onConfirm={closeYearAndCreateNewSheet}
+              onClose={() => setCloseYearOpen(false)}
+            />
+          )}
+        </div>
+      );
+    }
+
+    /* ============================================================
+       ROOT APP
+       ============================================================ */
+    function App() {
+      const [active, setActive] = useState("tefa");
+      const [books, setBooks] = useState({ tefa: null, upro: null });
+      const [ready, setReady] = useState(false);
+
+      useEffect(() => {
+        (async () => {
+          const [tefa, upro] = await Promise.all([loadBook("tefa"), loadBook("upro")]);
+          setBooks({ tefa, upro });
+          setReady(true);
+        })();
+      }, []);
+
+      const book = books[active];
+
+      return (
+        <div style={{ maxWidth: 980, margin: "0 auto", padding: "22px 18px 60px" }}>
+          <div style={{ textAlign: "center", marginBottom: 22 }}>
+            <div style={{ fontSize: 12, letterSpacing: 1, color: "#9C927B", fontWeight: 700 }}>
+              APLIKASI BUKU KAS BESAR
+            </div>
+            <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 30, color: "#26211A", marginTop: 4 }}>
+              Pembukuan TEFA &amp; Unit Produksi DKV
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 20, justifyContent: "center" }}>
+            {["tefa", "upro"].map((k) => {
+              const b = defaultBook(k);
+              const isActive = active === k;
+              return (
+                <button
+                  key={k}
+                  onClick={() => setActive(k)}
+                  style={{
+                    ...btnBase,
+                    padding: "10px 20px",
+                    fontSize: 14,
+                    background: isActive ? b.accent : "#fff",
+                    color: isActive ? "#fff" : "#4A4335",
+                    border: `1px solid ${isActive ? b.accent : "#E4DCC8"}`,
+                  }}
+                >
+                  Kas {b.title === "TEACHING FACTORY" ? "TEFA" : "UPRO"}
+                </button>
+              );
+            })}
+          </div>
+
+          {!ready || !book ? (
+            <div style={{ textAlign: "center", color: "#9C927B", padding: 60 }}>
+              Memuat data pembukuan...
+            </div>
+          ) : (
+            <BookView
+              book={book}
+              setBook={(next) => setBooks((prev) => ({ ...prev, [active]: next }))}
+            />
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
