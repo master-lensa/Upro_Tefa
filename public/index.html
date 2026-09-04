@@ -75,7 +75,7 @@
         sheets: {
           2026: {
             year: 2026,
-            openingBalance: isTefa ? 0 : 0,
+            openingBalance: 0,
             prevYearBalance: 0,
             transactions: [],
           }
@@ -118,13 +118,21 @@
     /* ---------------- COMPUTATION HELPERS ---------------- */
     function computeRunning(sheet) {
       if (!sheet) return { list: [], finalSaldo: 0 };
-      const sorted = [...(sheet.transactions || [])].sort((a, b) => {
+      
+      const transactions = (sheet.transactions || []).map((tx, index) => ({
+        ...tx,
+        _originalIndex: index
+      }));
+
+      transactions.sort((a, b) => {
         if (a.tanggal !== b.tanggal) return a.tanggal < b.tanggal ? -1 : 1;
-        return 0;
+        return a._originalIndex - b._originalIndex;
       });
-      let saldo = sheet.openingBalance || 0;
-      const withSaldo = sorted.map((tx) => {
-        saldo += tx.tipe === "in" ? tx.jumlah : -tx.jumlah;
+
+      let saldo = Number(sheet.openingBalance || 0);
+      const withSaldo = transactions.map((tx) => {
+        const amount = Number(tx.jumlah || 0);
+        saldo += tx.tipe === "in" ? amount : -amount;
         return { ...tx, saldoRunning: saldo };
       });
       return { list: withSaldo, finalSaldo: saldo };
@@ -242,6 +250,14 @@
     const iconBtn = { border: "none", background: "transparent", cursor: "pointer", padding: 5, color: "#7A705C", borderRadius: 5 };
 
     function Modal({ children, onClose, title }) {
+      useEffect(() => {
+        const handleKeyDown = (e) => {
+          if (e.key === "Escape") onClose();
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+      }, [onClose]);
+
       return (
         <div
           style={{
@@ -283,7 +299,7 @@
               <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 18, color: "#26211A" }}>
                 {title}
               </div>
-              <button onClick={onClose} style={{ ...btnGhost, padding: "4px 10px" }}>Tutup</button>
+              <button type="button" onClick={onClose} style={{ ...btnGhost, padding: "4px 10px" }}>Tutup</button>
             </div>
             <div style={{ padding: 20 }}>{children}</div>
           </div>
@@ -320,18 +336,20 @@
         }
       }, [unit, harga, autoJumlah]);
 
-      const submit = () => {
+      const submit = (e) => {
+        if (e) e.preventDefault();
         const jVal = parseFloat(jumlah);
         if (!tanggal) return setError("Tanggal wajib diisi.");
         if (!item.trim()) return setError("Uraian / item wajib diisi.");
         if (isNaN(jVal) || jVal <= 0) return setError("Jumlah harus lebih dari 0.");
+
         onSave({
           id: initial?.id || uid("tx"),
           tanggal,
           noBukti: noBukti.trim(),
           item: item.trim(),
-          unit: unit === "" ? null : parseFloat(unit),
-          harga: harga === "" ? null : parseFloat(harga),
+          unit: unit === "" || isNaN(parseFloat(unit)) ? null : parseFloat(unit),
+          harga: harga === "" || isNaN(parseFloat(harga)) ? null : parseFloat(harga),
           jumlah: jVal,
           tipe,
         });
@@ -339,58 +357,61 @@
 
       return (
         <Modal title={initial ? "Ubah Transaksi" : "Tambah Transaksi"} onClose={onClose}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <Field label="Tanggal">
-              <input type="date" style={inputStyle} value={tanggal} onChange={(e) => setTanggal(e.target.value)} />
-            </Field>
-            <Field label="No. Bukti (opsional)">
-              <input style={inputStyle} value={noBukti} onChange={(e) => setNoBukti(e.target.value)} placeholder="—" />
-            </Field>
-          </div>
-
-          <Field label="Uraian / Item">
-            <input style={inputStyle} value={item} onChange={(e) => setItem(e.target.value)} placeholder="Nama barang / keterangan" />
-          </Field>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <Field label="Unit (opsional)">
-              <input type="number" style={inputStyle} value={unit} onChange={(e) => { setUnit(e.target.value); setAutoJumlah(true); }} placeholder="0" />
-            </Field>
-            <Field label="Harga / Unit (opsional)">
-              <input type="number" style={inputStyle} value={harga} onChange={(e) => { setHarga(e.target.value); setAutoJumlah(true); }} placeholder="0" />
-            </Field>
-          </div>
-
-          <Field label="Jumlah (Rp)">
-            <input type="number" style={inputStyle} value={jumlah} onChange={(e) => { setJumlah(e.target.value); setAutoJumlah(false); }} placeholder="0" />
-          </Field>
-
-          <Field label="Jenis Transaksi">
-            <div style={{ display: "flex", gap: 10 }}>
-              {[{ v: "in", l: "Pemasukan" }, { v: "out", l: "Pengeluaran" }].map((o) => (
-                <button
-                  key={o.v}
-                  onClick={() => setTipe(o.v)}
-                  style={{
-                    ...btnBase,
-                    flex: 1,
-                    justifyContent: "center",
-                    background: tipe === o.v ? (o.v === "in" ? "#2f6b57" : "#a8451f") : "#F1ECDD",
-                    color: tipe === o.v ? "#fff" : "#5c5544",
-                  }}
-                >
-                  {o.l}
-                </button>
-              ))}
+          <form onSubmit={submit}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <Field label="Tanggal">
+                <input type="date" style={inputStyle} value={tanggal} onChange={(e) => setTanggal(e.target.value)} />
+              </Field>
+              <Field label="No. Bukti (opsional)">
+                <input style={inputStyle} value={noBukti} onChange={(e) => setNoBukti(e.target.value)} placeholder="—" />
+              </Field>
             </div>
-          </Field>
 
-          {error && <div style={{ color: "#a8451f", fontSize: 13, marginBottom: 10 }}>{error}</div>}
+            <Field label="Uraian / Item">
+              <input style={inputStyle} value={item} onChange={(e) => setItem(e.target.value)} placeholder="Nama barang / keterangan" />
+            </Field>
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6 }}>
-            <button style={btnGhost} onClick={onClose}>Batal</button>
-            <button style={{ ...btnBase, background: accent, color: "#fff" }} onClick={submit}>Simpan</button>
-          </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <Field label="Unit (opsional)">
+                <input type="number" style={inputStyle} value={unit} onChange={(e) => { setUnit(e.target.value); setAutoJumlah(true); }} placeholder="0" />
+              </Field>
+              <Field label="Harga / Unit (opsional)">
+                <input type="number" style={inputStyle} value={harga} onChange={(e) => { setHarga(e.target.value); setAutoJumlah(true); }} placeholder="0" />
+              </Field>
+            </div>
+
+            <Field label="Jumlah (Rp)">
+              <input type="number" style={inputStyle} value={jumlah} onChange={(e) => { setJumlah(e.target.value); setAutoJumlah(false); }} placeholder="0" />
+            </Field>
+
+            <Field label="Jenis Transaksi">
+              <div style={{ display: "flex", gap: 10 }}>
+                {[{ v: "in", l: "Pemasukan" }, { v: "out", l: "Pengeluaran" }].map((o) => (
+                  <button
+                    type="button"
+                    key={o.v}
+                    onClick={() => setTipe(o.v)}
+                    style={{
+                      ...btnBase,
+                      flex: 1,
+                      justifyContent: "center",
+                      background: tipe === o.v ? (o.v === "in" ? "#2f6b57" : "#a8451f") : "#F1ECDD",
+                      color: tipe === o.v ? "#fff" : "#5c5544",
+                    }}
+                  >
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+            </Field>
+
+            {error && <div style={{ color: "#a8451f", fontSize: 13, marginBottom: 10 }}>{error}</div>}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+              <button type="button" style={btnGhost} onClick={onClose}>Batal</button>
+              <button type="submit" style={{ ...btnBase, background: accent, color: "#fff" }}>Simpan</button>
+            </div>
+          </form>
         </Modal>
       );
     }
@@ -401,8 +422,8 @@
         <Modal title={title} onClose={onClose}>
           <p style={{ fontSize: 14, color: "#4A4335", lineHeight: 1.6 }}>{message}</p>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
-            <button style={btnGhost} onClick={onClose}>Batal</button>
-            <button style={{ ...btnBase, background: danger ? "#a8451f" : "#2f6b57", color: "#fff" }} onClick={onConfirm}>
+            <button type="button" style={btnGhost} onClick={onClose}>Batal</button>
+            <button type="button" style={{ ...btnBase, background: danger ? "#a8451f" : "#2f6b57", color: "#fff" }} onClick={onConfirm}>
               {confirmLabel}
             </button>
           </div>
@@ -411,15 +432,18 @@
     }
 
     /* ---------------- MONTH SECTION ---------------- */
-    function MonthSection({ monthKey, label, txs, accent, onEdit, onDelete, defaultOpen, isFirstMonth, openingBalance }) {
+    function MonthSection({ monthKey, label, txs, accent, onEdit, onDelete, defaultOpen, isFirstMonth, openingBalance, previousMonthBalance }) {
       const [open, setOpen] = useState(defaultOpen);
       const pemasukan = txs.reduce((s, t) => s + (t.tipe === "in" ? t.jumlah : 0), 0);
       const pengeluaran = txs.reduce((s, t) => s + (t.tipe === "out" ? t.jumlah : 0), 0);
-      const akhir = txs.length ? txs[txs.length - 1].saldoRunning : openingBalance;
+      
+      const baseSaldo = isFirstMonth ? openingBalance : previousMonthBalance;
+      const akhir = txs.length ? txs[txs.length - 1].saldoRunning : baseSaldo;
 
       return (
         <div style={{ border: "1px solid #E4DCC8", borderRadius: 9, marginBottom: 12, overflow: "hidden", background: "#fff" }}>
           <button
+            type="button"
             onClick={() => setOpen((o) => !o)}
             style={{
               width: "100%",
@@ -461,20 +485,19 @@
                   </tr>
                 </thead>
                 <tbody>
-                  {/* BARIS SALDO SEBELUMNYA / SALDO AWAL (PALING ATAS) */}
-                  {isFirstMonth && (
-                    <tr style={{ background: "#FCF9F2", fontWeight: 600, borderBottom: "2px solid #E4DCC8" }}>
-                      <td style={td}>—</td>
-                      <td style={td}>—</td>
-                      <td style={{ ...td, color: accent }}>SALDO SEBELUMNYA / SALDO AWAL TAHUN</td>
-                      <td style={{ ...td, textAlign: "right" }}>—</td>
-                      <td style={{ ...td, textAlign: "right" }}>—</td>
-                      <td style={{ ...td, textAlign: "right", color: "#2f6b57" }}>{rupiah(openingBalance)}</td>
-                      <td style={{ ...td, textAlign: "right" }}>—</td>
-                      <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{rupiah(openingBalance)}</td>
-                      <td style={td}></td>
-                    </tr>
-                  )}
+                  <tr style={{ background: "#FCF9F2", fontWeight: 600, borderBottom: "2px solid #E4DCC8" }}>
+                    <td style={td}>—</td>
+                    <td style={td}>—</td>
+                    <td style={{ ...td, color: accent }}>
+                      {isFirstMonth ? "SALDO AWAL TAHUN" : "SALDO SEBELUMNYA"}
+                    </td>
+                    <td style={{ ...td, textAlign: "right" }}>—</td>
+                    <td style={{ ...td, textAlign: "right" }}>—</td>
+                    <td style={{ ...td, textAlign: "right", color: "#2f6b57" }}>{rupiah(baseSaldo)}</td>
+                    <td style={{ ...td, textAlign: "right" }}>—</td>
+                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{rupiah(baseSaldo)}</td>
+                    <td style={td}></td>
+                  </tr>
 
                   {txs.map((t) => (
                     <tr key={t.id} style={{ borderTop: "1px solid #EFE9D8" }}>
@@ -493,15 +516,15 @@
                         {rupiah(t.saldoRunning)}
                       </td>
                       <td style={{ ...td, whiteSpace: "nowrap" }}>
-                        <button onClick={() => onEdit(t)} style={iconBtn} title="Ubah"><IconEdit /></button>
-                        <button onClick={() => onDelete(t)} style={{ ...iconBtn, color: "#a8451f" }} title="Hapus"><IconTrash /></button>
+                        <button type="button" onClick={() => onEdit(t)} style={iconBtn} title="Ubah"><IconEdit /></button>
+                        <button type="button" onClick={() => onDelete(t)} style={{ ...iconBtn, color: "#a8451f" }} title="Hapus"><IconTrash /></button>
                       </td>
                     </tr>
                   ))}
-                  {txs.length === 0 && !isFirstMonth && (
+                  {txs.length === 0 && (
                     <tr>
                       <td colSpan={9} style={{ ...td, textAlign: "center", color: "#9C927B", padding: "18px 0" }}>
-                        Belum ada transaksi bulan ini.
+                        Belum ada transaksi pada periode ini.
                       </td>
                     </tr>
                   )}
@@ -687,7 +710,7 @@
           rows.push([monthLabel(key), pemasukan, pengeluaran, txs[txs.length - 1]?.saldoRunning ?? ""]);
         });
         rows.push([]);
-        rows.push(["Saldo Awal Tahun (40% Stumul)", currentSheet.openingBalance]);
+        rows.push(["Saldo Awal Tahun", currentSheet.openingBalance]);
         rows.push(["Total Pemasukan", totalPemasukan]);
         rows.push(["Total Pengeluaran", totalPengeluaran]);
         rows.push(["Saldo Akhir Tahun", finalSaldo]);
@@ -704,6 +727,7 @@
             <span style={{ fontSize: 12.5, fontWeight: 700, color: "#7A705C", marginRight: 6 }}>SHEET TAHUN:</span>
             {sheetYears.map((yr) => (
               <button
+                type="button"
                 key={yr}
                 onClick={() => persist({ ...book, activeYear: yr })}
                 style={{
@@ -746,6 +770,7 @@
               </div>
             </div>
             <button
+              type="button"
               style={{ ...btnBase, background: book.accent, color: "#fff" }}
               onClick={() => setTxModal({ mode: "add" })}
             >
@@ -768,7 +793,7 @@
                       style={{ ...inputStyle, fontSize: 15, padding: "4px 8px", width: 140 }}
                       onKeyDown={(e) => e.key === "Enter" && saveOpening()}
                     />
-                    <button style={{ ...btnGhost, padding: "4px 8px", fontSize: 12 }} onClick={saveOpening}>OK</button>
+                    <button type="button" style={{ ...btnGhost, padding: "4px 8px", fontSize: 12 }} onClick={saveOpening}>OK</button>
                   </span>
                 ) : (
                   <span onClick={() => { setOpeningDraft(currentSheet.openingBalance); setEditingOpening(true); }} style={{ cursor: "pointer" }} title="Klik untuk ubah">
@@ -793,7 +818,7 @@
                   Dihitung otomatis dari saldo saat ini — 40% Stumul (dana pengelolaan) &amp; 60% BLUD.
                 </div>
               </div>
-              <button style={{ ...btnBase, background: "#26211A", color: "#fff" }} onClick={() => setCloseYearOpen(true)}>
+              <button type="button" style={{ ...btnBase, background: "#26211A", color: "#fff" }} onClick={() => setCloseYearOpen(true)}>
                 + Tambah Sheet Tahun {activeYear + 1}
               </button>
             </div>
@@ -825,10 +850,10 @@
                 <option key={k} value={k}>{monthLabel(k)}</option>
               ))}
             </select>
-            <button style={btnGhost} disabled={selectedMonth === "ALL"} onClick={() => downloadMonthRecap(selectedMonth)}>
+            <button type="button" style={btnGhost} disabled={selectedMonth === "ALL"} onClick={() => downloadMonthRecap(selectedMonth)}>
               <IconDownload /> Unduh Rekap Bulanan
             </button>
-            <button style={btnGhost} onClick={downloadYearRecap}>
+            <button type="button" style={btnGhost} onClick={downloadYearRecap}>
               <IconDownload /> Unduh Rekap Tahunan
             </button>
           </div>
@@ -854,7 +879,7 @@
                   <tr style={{ background: "#FCF9F2", fontWeight: 600 }}>
                     <td style={td}>—</td>
                     <td style={td}>—</td>
-                    <td style={{ ...td, color: book.accent }}>SALDO SEBELUMNYA / SALDO AWAL TAHUN</td>
+                    <td style={{ ...td, color: book.accent }}>SALDO AWAL TAHUN</td>
                     <td style={{ ...td, textAlign: "right" }}>—</td>
                     <td style={{ ...td, textAlign: "right" }}>—</td>
                     <td style={{ ...td, textAlign: "right", color: "#2f6b57" }}>{rupiah(currentSheet.openingBalance)}</td>
@@ -867,25 +892,33 @@
             </div>
           )}
 
-          {visibleMonths.map(([key, txs], idx) => (
-            <MonthSection
-              key={key}
-              monthKey={key}
-              label={monthLabel(key)}
-              txs={txs}
-              accent={book.accent}
-              defaultOpen={idx === visibleMonths.length - 1 || visibleMonths.length === 1}
-              isFirstMonth={idx === 0}
-              openingBalance={currentSheet.openingBalance}
-              onEdit={(tx) => setTxModal({ mode: "edit", tx })}
-              onDelete={(tx) => setDeleteTarget(tx)}
-            />
-          ))}
+          {visibleMonths.map(([key, txs], idx) => {
+            const prevMonthTxs = idx > 0 ? visibleMonths[idx - 1][1] : [];
+            const previousMonthBalance = prevMonthTxs.length 
+              ? prevMonthTxs[prevMonthTxs.length - 1].saldoRunning 
+              : currentSheet.openingBalance;
+
+            return (
+              <MonthSection
+                key={key}
+                monthKey={key}
+                label={monthLabel(key)}
+                txs={txs}
+                accent={book.accent}
+                defaultOpen={idx === visibleMonths.length - 1 || visibleMonths.length === 1}
+                isFirstMonth={idx === 0}
+                openingBalance={currentSheet.openingBalance}
+                previousMonthBalance={previousMonthBalance}
+                onEdit={(tx) => setTxModal({ mode: "edit", tx })}
+                onDelete={(tx) => setDeleteTarget(tx)}
+              />
+            );
+          })}
 
           {/* Archives */}
           {book.archives && book.archives.length > 0 && (
             <div style={{ marginTop: 24 }}>
-              <button onClick={() => setShowArchives((s) => !s)} style={{ ...btnGhost, marginBottom: 10 }}>
+              <button type="button" onClick={() => setShowArchives((s) => !s)} style={{ ...btnGhost, marginBottom: 10 }}>
                 <IconChevron open={showArchives} /> Riwayat Setoran BLUD ({book.archives.length})
               </button>
               {showArchives && (
@@ -939,7 +972,7 @@
           {closeYearOpen && (
             <ConfirmModal
               title={`Tutup Buku & Buat Sheet ${activeYear + 1}?`}
-              message={`Saldo akhir tahun ${activeYear} (${rupiah(finalSaldo)}) akan dipotong: 40% (${rupiah(potongan40)}) disetorkan ke STUMUL sebagai SALDO AWAL (paling atas) pada Sheet Tahun ${activeYear + 1}, dan 60% (${rupiah(potongan60)}) disetorkan ke BLUD. Lanjutkan duplikasi sheet?`}
+              message={`Saldo akhir tahun ${activeYear} (${rupiah(finalSaldo)}) akan dipotong: 40% (${rupiah(potongan40)}) disetorkan ke STUMUL sebagai SALDO AWAL pada Sheet Tahun ${activeYear + 1}, dan 60% (${rupiah(potongan60)}) disetorkan ke BLUD. Lanjutkan duplikasi sheet?`}
               confirmLabel="Ya, Buat Sheet Baru"
               danger
               onConfirm={closeYearAndCreateNewSheet}
@@ -986,6 +1019,7 @@
               const isActive = active === k;
               return (
                 <button
+                  type="button"
                   key={k}
                   onClick={() => setActive(k)}
                   style={{
